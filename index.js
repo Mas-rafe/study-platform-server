@@ -12,6 +12,8 @@ app.use(express.json());
 
 
 
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.fvalijd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -44,6 +46,7 @@ function verifyJWT(req, res, next) {
 }
 
 
+
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
@@ -57,7 +60,14 @@ async function run() {
         const materialsCollection = db.collection("materials"); // ✅ added
 
 
-
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email;
+            const user = await usersCollection.findOne({ email });
+            if (user?.role !== 'admin') {
+                return res.status(403).send({ message: 'Forbidden: admin only' });
+            }
+            next();
+        };
 
         // JWT generate route
         app.post('/jwt', (req, res) => {
@@ -92,19 +102,11 @@ async function run() {
 
 
         // protected route - user নিজ data পাবে
-        app.get('/users', verifyJWT, async (req, res) => {
+        app.get('/users/me', verifyJWT, async (req, res) => {
             const decodedEmail = req.decoded.email;
-
-            // client থেকে query দিয়ে email পাঠাতে হবে ?email=...
-            if (req.query.email !== decodedEmail) {
-                return res.status(403).send({ message: "Forbidden access" });
-            }
-
-            const query = { email: req.query.email };
-            const user = await usersCollection.findOne(query);
+            const user = await usersCollection.findOne({ email: decodedEmail });
             res.send(user);
         });
-
         // Public route: টেস্ট করার জন্য
         app.get('/users/public', async (req, res) => {
             const users = await usersCollection.find().toArray();
@@ -152,6 +154,17 @@ async function run() {
         //         res.status(500).send({ message: "Failed to fetch sessions" });
         //     }
         // });
+
+        // GET: Approved sessions (for students)
+        app.get("/sessions", async (req, res) => {
+            try {
+                const result = await sessionsCollection.find({ status: "approved" }).toArray();
+                res.send(result);
+            } catch (error) {
+                console.error("❌ Error fetching sessions:", error);
+                res.status(500).send({ message: "Failed to fetch sessions" });
+            }
+        });
 
         // GET /studySessions/pending
         app.get("/sessions/pending", async (req, res) => {
@@ -242,16 +255,7 @@ async function run() {
             }
         });
 
-        // GET: Approved sessions (for students)
-        app.get("/sessions", async (req, res) => {
-            try {
-                const result = await sessionsCollection.find({ status: "approved" }).toArray();
-                res.send(result);
-            } catch (error) {
-                console.error("❌ Error fetching sessions:", error);
-                res.status(500).send({ message: "Failed to fetch sessions" });
-            }
-        });
+
 
         // Admin stats route
         app.get("/admin/stats", async (req, res) => {
@@ -284,6 +288,43 @@ async function run() {
                 res.status(500).send({ error: "Failed to fetch admin stats" });
             }
         });
+
+        //for search:Admin Dashboard> manage Users
+        // Get all users (only admin can do this)
+        app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
+            const { search } = req.query;
+            const query = search
+                ? {
+                    $or: [
+                        { name: { $regex: search, $options: "i" } },
+                        { email: { $regex: search, $options: "i" } },
+                    ],
+                }
+                : {};
+
+            const users = await usersCollection.find(query).toArray();
+            res.send(users);
+        });
+
+        // Update user role
+        app.patch('/users/:id/role', verifyJWT, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const { role } = req.body;
+            const result = await usersCollection.updateOne(
+                { _id: new ObjectId(id) },
+                { $set: { role } }
+            );
+            res.send(result);
+        });
+
+        // Delete user
+        app.delete('/users/:id', verifyJWT, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+            res.send(result);
+        });
+
+
 
 
 
