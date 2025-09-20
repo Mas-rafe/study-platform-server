@@ -166,36 +166,49 @@ async function run() {
             }
         });
 
+
+
+
+        app.get("/reviews/:sessionId", async (req, res) => {
+            const { sessionId } = req.params;
+            const reviews = await reviewsCollection
+                .find({ sessionId })
+                .sort({ createdAt: -1 })
+                .toArray();
+            res.send(reviews);
+        });
+
+
+
         // GET /studySessions/pending
         app.get("/sessions/pending", async (req, res) => {
             try {
+                console.log("Fetching pending sessions...");
                 const pendingSessions = await sessionsCollection
                     .find({ status: "pending" })
                     .toArray();
+                console.log("Found pending sessions:", pendingSessions);
                 res.send(pendingSessions);
             } catch (err) {
+                console.error("Error fetching pending sessions:", err);
                 res.status(500).send({ error: "Failed to fetch pending sessions" });
             }
         });
 
-        // PATCH: Approve session
+        // Approve session
         app.patch("/sessions/:id/approve", async (req, res) => {
             try {
                 const id = req.params.id;
 
-                let filter;
-                try {
-                    filter = { _id: new ObjectId(id) };  // try ObjectId
-                } catch {
-                    filter = { _id: id };  // fallback to string
+                // Validate ObjectId
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ success: false, message: "Invalid session ID" });
                 }
 
                 const result = await sessionsCollection.updateOne(
-                    filter,
+                    { _id: new ObjectId(id) },
                     { $set: { status: "approved" } }
                 );
-
-                console.log("🔎 Approve filter:", filter, "Result:", result);
 
                 if (result.modifiedCount > 0) {
                     res.send({ success: true, message: "Session approved" });
@@ -208,24 +221,19 @@ async function run() {
             }
         });
 
-        // PATCH: Reject session
+        // Reject session
         app.patch("/sessions/:id/reject", async (req, res) => {
             try {
                 const id = req.params.id;
 
-                let filter;
-                try {
-                    filter = { _id: new ObjectId(id) };
-                } catch {
-                    filter = { _id: id };
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ success: false, message: "Invalid session ID" });
                 }
 
                 const result = await sessionsCollection.updateOne(
-                    filter,
+                    { _id: new ObjectId(id) },
                     { $set: { status: "rejected" } }
                 );
-
-                console.log("🔎 Reject filter:", filter, "Result:", result);
 
                 if (result.modifiedCount > 0) {
                     res.send({ success: true, message: "Session rejected" });
@@ -237,8 +245,6 @@ async function run() {
                 res.status(500).send({ success: false, message: "Failed to reject session" });
             }
         });
-
-
 
 
         app.get("/sessions/:email", async (req, res) => {
@@ -255,6 +261,21 @@ async function run() {
             }
         });
 
+        // GET single session by ID
+        app.get("/sessions/:id", async (req, res) => {
+            try {
+                const { id } = req.params;
+                if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid session ID" });
+
+                const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
+                if (!session) return res.status(404).send({ message: "Session not found" });
+
+                res.send(session);
+            } catch (err) {
+                console.error("Error fetching session:", err);
+                res.status(500).send({ message: "Failed to fetch session" });
+            }
+        });
 
 
         // Admin stats route
