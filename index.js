@@ -178,10 +178,22 @@ async function run() {
             res.send(reviews);
         });
 
+        // GET: All sessions (for admin)
+        app.get("/sessions", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const result = await sessionsCollection.find({}).toArray(); // fetch all sessions
+                res.send(result);
+            } catch (error) {
+                console.error("❌ Error fetching sessions:", error);
+                res.status(500).send({ success: false, message: "Failed to fetch sessions" });
+            }
+        });
 
 
-        // GET /studySessions/pending
-        app.get("/sessions/pending", async (req, res) => {
+
+
+        // GET /sessions/pending → only admin can fetch pending sessions
+        app.get("/sessions/pending", verifyJWT, verifyAdmin, async (req, res) => {
             try {
                 console.log("Fetching pending sessions...");
                 const pendingSessions = await sessionsCollection
@@ -191,29 +203,29 @@ async function run() {
                 res.send(pendingSessions);
             } catch (err) {
                 console.error("Error fetching pending sessions:", err);
-                res.status(500).send({ error: "Failed to fetch pending sessions" });
+                res.status(500).send({ success: false, message: "Failed to fetch pending sessions" });
             }
         });
 
-        // Approve session
-        app.patch("/sessions/:id/approve", async (req, res) => {
+        //approve session
+        app.patch("/sessions/:id/approve", verifyJWT, verifyAdmin, async (req, res) => {
             try {
                 const id = req.params.id;
+                const { fee = 0 } = req.body;
 
-                // Validate ObjectId
                 if (!ObjectId.isValid(id)) {
                     return res.status(400).send({ success: false, message: "Invalid session ID" });
                 }
 
                 const result = await sessionsCollection.updateOne(
-                    { _id: new ObjectId(id) },
-                    { $set: { status: "approved" } }
+                    { _id: new ObjectId(id), status: "pending" },
+                    { $set: { status: "approved", registrationFee: fee } }
                 );
 
                 if (result.modifiedCount > 0) {
                     res.send({ success: true, message: "Session approved" });
                 } else {
-                    res.status(404).send({ success: false, message: "Session not found" });
+                    res.status(404).send({ success: false, message: "Pending session not found" });
                 }
             } catch (error) {
                 console.error("❌ Error approving session:", error);
@@ -221,10 +233,33 @@ async function run() {
             }
         });
 
-        // Reject session
-        app.patch("/sessions/:id/reject", async (req, res) => {
+        //reject session
+        app.patch("/sessions/:id/reject", verifyJWT, verifyAdmin, async (req, res) => {
             try {
                 const id = req.params.id;
+
+                const result = await sessionsCollection.updateOne(
+                    { _id: new ObjectId(id), status: "pending" },
+                    { $set: { status: "rejected" } }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: "Session rejected" });
+                } else {
+                    res.status(404).send({ success: false, message: "Pending session not found" });
+                }
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ success: false, message: "Server error" });
+            }
+        });
+
+
+        // PATCH /sessions/:id → update session details (admin only)
+        app.patch("/sessions/:id", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const { id } = req.params;
+                const updates = req.body; // e.g., { title, subject, duration, registrationFee, status }
 
                 if (!ObjectId.isValid(id)) {
                     return res.status(400).send({ success: false, message: "Invalid session ID" });
@@ -232,50 +267,83 @@ async function run() {
 
                 const result = await sessionsCollection.updateOne(
                     { _id: new ObjectId(id) },
-                    { $set: { status: "rejected" } }
+                    { $set: updates }
                 );
 
                 if (result.modifiedCount > 0) {
-                    res.send({ success: true, message: "Session rejected" });
+                    return res.send({ success: true, message: "Session updated successfully" });
                 } else {
-                    res.status(404).send({ success: false, message: "Session not found" });
+                    return res.status(404).send({ success: false, message: "Session not found" });
                 }
-            } catch (error) {
-                console.error("❌ Error rejecting session:", error);
-                res.status(500).send({ success: false, message: "Failed to reject session" });
+            } catch (err) {
+                console.error("Error updating session:", err);
+                res.status(500).send({ success: false, message: "Failed to update session" });
             }
         });
 
 
-        app.get("/sessions/:email", async (req, res) => {
+        app.delete("/sessions/:id", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ success: false, message: "Invalid session ID" });
+                }
+
+                const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount > 0) {
+                    res.send({ success: true, deletedCount: result.deletedCount });
+                } else {
+                    res.status(404).send({ success: false, message: "Session not found" });
+                }
+            } catch (error) {
+                console.error("❌ Error deleting session:", error);
+                res.status(500).send({ success: false, message: "Failed to delete session" });
+            }
+        });
+
+
+        // 🔄 Tutor's sessions (use tutor email)
+        // Replaces your current: app.get("/sessions/:email")
+        app.get("/sessions/tutor/:email", async (req, res) => {
             try {
                 const email = req.params.email;
                 const sessions = await sessionsCollection
                     .find({ tutorEmail: email })
                     .sort({ createdAt: -1 })
                     .toArray();
+
                 res.send(sessions);
             } catch (error) {
-                console.error(" Error fetching tutor sessions:", error);
+                console.error("Error fetching tutor sessions:", error);
                 res.status(500).send({ message: "Failed to fetch tutor sessions" });
             }
         });
 
-        // GET single session by ID
+        // 🔄 Get single session by ID
+        // Keep this route, but make sure it's below the tutor route
         app.get("/sessions/:id", async (req, res) => {
-            try {
-                const { id } = req.params;
-                if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid session ID" });
-
-                const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
-                if (!session) return res.status(404).send({ message: "Session not found" });
-
-                res.send(session);
-            } catch (err) {
-                console.error("Error fetching session:", err);
-                res.status(500).send({ message: "Failed to fetch session" });
-            }
+            const { id } = req.params;
+            if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid session ID" });
+            const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
+            if (!session) return res.status(404).send({ message: "Session not found" });
+            res.send(session);
         });
+
+        // Get reviews for a session
+        app.get("/reviews/:sessionId", async (req, res) => {
+            const { sessionId } = req.params;
+            if (!ObjectId.isValid(sessionId)) return res.status(400).send({ message: "Invalid session ID" });
+            const reviews = await reviewsCollection
+                .find({ sessionId: new ObjectId(sessionId) })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(reviews);
+        });
+
+
 
 
         // Admin stats route
@@ -328,14 +396,32 @@ async function run() {
         });
 
         // Update user role
+        // Update user role (only student <-> tutor, never admin)
         app.patch('/users/:id/role', verifyJWT, verifyAdmin, async (req, res) => {
-            const id = req.params.id;
-            const { role } = req.body;
-            const result = await usersCollection.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: { role } }
-            );
-            res.send(result);
+            try {
+                const id = req.params.id;
+                const { role } = req.body;
+
+                // Only allow student/tutor roles
+                if (!["student", "tutor"].includes(role)) {
+                    return res.status(400).send({ success: false, message: "Invalid role" });
+                }
+
+                // Prevent changing admin role
+                const filter = { _id: new ObjectId(id), role: { $ne: "admin" } };
+                const updateDoc = { $set: { role } };
+
+                const result = await usersCollection.updateOne(filter, updateDoc);
+
+                if (result.matchedCount === 0) {
+                    return res.status(403).send({ success: false, message: "Cannot change admin role" });
+                }
+
+                res.send({ success: true, message: "Role updated", modifiedCount: result.modifiedCount });
+            } catch (err) {
+                console.error("Error updating role:", err);
+                res.status(500).send({ success: false, message: "Server error" });
+            }
         });
 
         // Delete user
@@ -344,6 +430,104 @@ async function run() {
             const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
             res.send(result);
         });
+
+
+        // POST /bookings → student books a session
+        app.post("/bookings", async (req, res) => {
+            try {
+                const { sessionId, studentEmail, tutorEmail } = req.body;
+
+                console.log("Incoming booking data:", req.body);
+
+                if (!sessionId || !studentEmail || !tutorEmail) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Missing required fields",
+                    });
+                }
+
+                if (!ObjectId.isValid(sessionId)) {
+                    return res.status(400).send({ success: false, message: "Invalid session ID" });
+                }
+
+                // Check session exists & approved
+                const session = await sessionsCollection.findOne({
+                    _id: new ObjectId(sessionId),
+                    status: "approved",
+                });
+
+                if (!session) {
+                    return res.status(404).send({
+                        success: false,
+                        message: "Session not found or not approved",
+                    });
+                }
+
+                // Duplicate booking check (compare as string)
+                const existingBooking = await bookingsCollection.findOne({
+                    sessionId: sessionId.toString(),
+                    studentEmail,
+                });
+
+                if (existingBooking) {
+                    return res.status(409).send({
+                        success: false,
+                        message: "You already booked this session",
+                    });
+                }
+                ;
+                // Insert booking
+                const booking = {
+                    sessionId: sessionId.toString(), // store as string
+                    studentEmail,
+                    tutorEmail,
+                    bookedAt: new Date(),
+                    status: "pending",
+                };
+
+                const result = await bookingsCollection.insertOne(booking);
+
+                if (result.insertedId) {
+                    res.send({ success: true, message: "Session booked successfully!" });
+                } else {
+                    res.status(500).send({ success: false, message: "Failed to book session" });
+                }
+            } catch (err) {
+                console.error("Error creating booking:", err);
+                res.status(500).send({ success: false, message: "Server error" });
+            }
+        });
+
+        app.post("/reviews", async (req, res) => {
+            try {
+                const { sessionId, studentEmail, studentName, rating, comment } = req.body;
+
+                if (!sessionId || !studentEmail || rating == null || !comment) {
+                    return res.status(400).send({ success: false, message: "Missing required fields" });
+                }
+
+                const review = {
+                    sessionId: sessionId.toString(),
+                    studentEmail,
+                    studentName,
+                    rating,
+                    comment,
+                    createdAt: new Date(),
+                };
+
+                const result = await reviewsCollection.insertOne(review);
+
+                if (result.insertedId) {
+                    res.send({ success: true, message: "Review added successfully!" });
+                } else {
+                    res.status(500).send({ success: false, message: "Failed to add review" });
+                }
+            } catch (err) {
+                console.error("Error adding review:", err);
+                res.status(500).send({ success: false, message: "Server error" });
+            }
+        });
+
 
 
 
