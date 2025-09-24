@@ -5,10 +5,14 @@ const app = express()
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
+const multer = require("multer");
+const path = require("path");
+
 
 //middleware
 app.use(cors());
 app.use(express.json());
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 
 
@@ -45,6 +49,19 @@ function verifyJWT(req, res, next) {
     });
 }
 
+// Configure storage
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, "uploads/materials"); // all files will be stored in /uploads
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    },
+});
+
+const upload = multer({ storage });
+
+
 
 
 async function run() {
@@ -56,7 +73,7 @@ async function run() {
         const sessionsCollection = db.collection('sessions');
         const bookingsCollection = db.collection('bookings');
         const reviewsCollection = db.collection('reviews');
-        const notificationsCollection = db.collection('notifications');
+        // const notificationsCollection = db.collection('notifications');
         const materialsCollection = db.collection("materials"); // ✅ added
 
 
@@ -115,16 +132,31 @@ async function run() {
 
 
         // POST: Create session
+        // POST: Create session
         // ------------------
         app.post("/sessions", async (req, res) => {
             try {
-                const { _id, ...session } = req.body;
+                const { _id, ...data } = req.body;
 
-                // add default fields
-                session.status = "pending";      // every new session starts as pending
-                session.createdAt = new Date();  // useful for sorting later
+                const newSession = {
+                    title: data.title,
+                    subject: data.subject,
+                    description: data.description,
+                    registrationStart: new Date(data.registrationStart),
+                    registrationEnd: new Date(data.registrationEnd),
+                    classStart: new Date(data.classStart),
+                    classEnd: new Date(data.classEnd),
+                    duration: Number(data.duration),
+                    registrationFee: Number(data.registrationFee) || 0,
+                    tutorName: data.tutorName,
+                    tutorEmail: data.tutorEmail,
 
-                const result = await sessionsCollection.insertOne(session);
+                    // default fields
+                    status: "pending",   // every new session starts as pending
+                    createdAt: new Date()
+                };
+
+                const result = await sessionsCollection.insertOne(newSession);
                 res.send({
                     success: true,
                     message: "Session created successfully (pending approval)",
@@ -134,10 +166,11 @@ async function run() {
                 console.error("❌ Error creating session:", error);
                 res.status(500).send({
                     success: false,
-                    message: "Failed to create session"
+                    message: "Failed to create session",
                 });
             }
         });
+
 
 
         // GET: All sessions
@@ -320,6 +353,21 @@ async function run() {
                 res.status(500).send({ message: "Failed to fetch tutor sessions" });
             }
         });
+
+        // PATCH session resubmit (for rejected → pending)[tutors}]
+        app.patch("/sessions/:id/resubmit", async (req, res) => {
+            try {
+                const id = req.params.id;
+                const filter = { _id: new ObjectId(id) };
+                const updateDoc = { $set: { status: "pending" } };
+                const result = await sessionsCollection.updateOne(filter, updateDoc);
+                res.send(result);
+            } catch (error) {
+                console.error("Error resubmitting session:", error);
+                res.status(500).send({ message: "Failed to resubmit session" });
+            }
+        });
+
 
         // 🔄 Get single session by ID
         // Keep this route, but make sure it's below the tutor route
@@ -528,7 +576,195 @@ async function run() {
             }
         });
 
+        // GET all reviews (admin only)
+        app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const reviews = await reviewsCollection.find({}).toArray();
+                res.send(reviews);
+            } catch (error) {
+                console.error("❌ Error fetching reviews:", error);
+                res.status(500).send({ success: false, message: "Failed to fetch reviews" });
+            }
+        });
 
+        // DELETE review (admin only)
+        app.delete("/reviews/:id", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const id = req.params.id;
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ success: false, message: "Invalid review ID" });
+                }
+
+                const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
+                if (result.deletedCount > 0) {
+                    res.send({ success: true, message: "Review deleted" });
+                } else {
+                    res.status(404).send({ success: false, message: "Review not found" });
+                }
+            } catch (error) {
+                console.error("❌ Error deleting review:", error);
+                res.status(500).send({ success: false, message: "Failed to delete review" });
+            }
+        });
+
+        //Api s for material
+        // POST /materials (with file upload)
+        app.post("/materials", upload.single("file"), async (req, res) => {
+            try {
+                const { sessionId, title, description, tutorEmail } = req.body;
+                const fileUrl = `/uploads/materials/${req.file.filename}`;
+
+                const material = {
+                    sessionId,
+                    title,
+                    description,
+                    tutorEmail,
+                    fileUrl,
+                    status: "pending",   // 👈 default status
+                    createdAt: new Date(),
+                };
+
+                const result = await materialsCollection.insertOne(material);
+                res.status(201).send({ success: true, result });
+            } catch (error) {
+                console.error("Error uploading material:", error);
+                res.status(500).send({ error: "Failed to upload material" });
+            }
+        });
+
+        // Serve uploaded files statically
+        app.use("/uploads", express.static("uploads"));
+
+
+        // GET all materials → optional: admin only
+        app.get("/materials", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const materials = await materialsCollection
+                    .find()
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(materials);
+            } catch (error) {
+                console.error("❌ Error fetching materials:", error);
+                res.status(500).send({ success: false, message: "Failed to fetch materials" });
+            }
+        });
+
+
+        // GET /materials/pending → fetch all pending materials (admin only)
+        app.get("/materials/pending", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const pendingMaterials = await materialsCollection
+                    .find({ status: "pending" })
+                    .sort({ createdAt: -1 }) // latest first
+                    .toArray();
+
+                res.send(pendingMaterials);
+            } catch (error) {
+                console.error("❌ Error fetching pending materials:", error);
+                res.status(500).send({ success: false, message: "Failed to fetch pending materials" });
+            }
+        });
+
+
+        // PATCH /materials/:id/approve
+
+        app.patch("/materials/:id/approve", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await materialsCollection.updateOne(
+                    { _id: new ObjectId(id), status: "pending" },
+                    { $set: { status: "approved" } }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: "Material approved" });
+                } else {
+                    res.status(404).send({ success: false, message: "Pending material not found" });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: "Failed to approve material" });
+            }
+        });
+
+        // PATCH /materials/:id/reject
+        app.patch("/materials/:id/reject", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const { id } = req.params;
+                const result = await materialsCollection.updateOne(
+                    { _id: new ObjectId(id), status: "pending" },
+                    { $set: { status: "rejected" } }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true, message: "Material rejected" });
+                } else {
+                    res.status(404).send({ success: false, message: "Pending material not found" });
+                }
+            } catch (error) {
+                res.status(500).send({ success: false, message: "Failed to reject material" });
+            }
+        });
+
+
+        // GET /materials/approved
+        app.get("/materials/approved", async (req, res) => {
+            try {
+                const result = await materialsCollection.find({ status: "approved" }).toArray();
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ error: "Failed to fetch approved materials" });
+            }
+        });
+
+        app.get("/materials/tutor/:email", async (req, res) => {
+            try {
+                const email = req.params.email;
+                const materials = await materialsCollection
+                    .find({ tutorEmail: email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(materials);
+            } catch (error) {
+                console.error("Error fetching tutor materials:", error);
+                res.status(500).send({ message: "Failed to fetch tutor materials" });
+            }
+        });
+
+
+        //tutor email stats
+        app.get("/tutor/stats/:email", async (req, res) => {
+            try {
+                const email = req.params.email;
+
+                // Double-check which field you saved in MongoDB
+                const totalSessions = await sessionsCollection.countDocuments({ tutorEmail: email });
+                const totalMaterials = await materialsCollection.countDocuments({ tutorEmail: email });
+                const totalStudents = await bookingsCollection.countDocuments({ tutorEmail: email });
+
+                // Average rating
+                const reviews = await reviewsCollection.find({ tutorEmail: email }).toArray();
+                let avgRating = 0;
+                if (reviews.length > 0) {
+                    const ratings = reviews.map(r => Number(r.rating) || 0);
+                    avgRating = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+                }
+
+                res.send({
+                    totalSessions,
+                    totalMaterials,
+                    totalStudents,
+                    avgRating,
+                });
+            } catch (err) {
+                console.error("❌ Error fetching tutor stats:", err);
+                res.status(500).send({
+                    message: "Failed to fetch tutor stats",
+                    error: err.message,
+                });
+            }
+        });
 
 
 
@@ -561,3 +797,6 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
     console.log(`study platform running on port ${port}`)
 })
+
+
+
