@@ -73,7 +73,7 @@ async function run() {
         const sessionsCollection = db.collection('sessions');
         const bookingsCollection = db.collection('bookings');
         const reviewsCollection = db.collection('reviews');
-        // const notificationsCollection = db.collection('notifications');
+        const notesCollection = db.collection("notes");
         const materialsCollection = db.collection("materials"); // ✅ added
 
 
@@ -765,6 +765,194 @@ async function run() {
                 });
             }
         });
+
+
+        // 📌 Student Stats
+        // -------------------------
+        // 📌 STUDENT STATS
+        // -------------------------
+        app.get("/student/stats/:email", verifyJWT, async (req, res) => {
+            try {
+                const email = req.params.email;
+
+                // ensure student can only fetch their own stats
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
+
+                const totalBookings = await bookingsCollection.countDocuments({ studentEmail: email });
+                const totalReviews = await reviewsCollection.countDocuments({ studentEmail: email });
+
+                // get sessionIds from bookings
+                const booked = await bookingsCollection.find({ studentEmail: email }).toArray();
+                const sessionIds = booked.map(b => b.sessionId).filter(Boolean);
+
+                const totalMaterials = sessionIds.length
+                    ? await materialsCollection.countDocuments({
+                        sessionId: { $in: sessionIds },
+                        status: "approved",
+                    })
+                    : 0;
+
+                res.send({ totalBookings, totalReviews, totalMaterials });
+            } catch (err) {
+                console.error("❌ Error fetching student stats:", err);
+                res.status(500).send({ message: "Failed to fetch student stats" });
+            }
+        });
+
+
+        // -------------------------
+        // 📌 STUDENT BOOKINGS
+        // -------------------------
+        app.get("/bookings/student/:email", verifyJWT, async (req, res) => {
+            try {
+                const email = req.params.email;
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
+
+                const bookings = await bookingsCollection
+                    .find({ studentEmail: email })
+                    .sort({ bookedAt: -1 })
+                    .toArray();
+
+                // attach session data
+                const enriched = await Promise.all(
+                    bookings.map(async (b) => {
+                        let sessionDoc = null;
+                        try {
+                            if (ObjectId.isValid(b.sessionId)) {
+                                sessionDoc = await sessionsCollection.findOne({ _id: new ObjectId(b.sessionId) });
+                            }
+                            if (sessionDoc) sessionDoc._id = sessionDoc._id.toString();
+                        } catch {
+                            // ignore errors
+                        }
+                        return { ...b, session: sessionDoc };
+                    })
+                );
+
+                res.send(enriched);
+            } catch (err) {
+                console.error("❌ Error fetching student bookings:", err);
+                res.status(500).send({ message: "Failed to fetch bookings" });
+            }
+        });
+
+
+        // -------------------------
+        // 📌 STUDENT MATERIALS
+        // -------------------------
+        app.get("/materials/session/:sessionId", verifyJWT, async (req, res) => {
+            try {
+                const sessionId = req.params.sessionId;
+
+                // fetch only approved materials for that session
+                const materials = await materialsCollection
+                    .find({ sessionId, status: "approved" })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(materials);
+            } catch (err) {
+                console.error("❌ Error fetching materials:", err);
+                res.status(500).send({ message: "Failed to fetch materials" });
+            }
+        });
+
+
+        // -------------------------
+        // 📌 STUDENT NOTES
+        // -------------------------
+
+        // Create note
+        app.post("/notes", verifyJWT, async (req, res) => {
+            try {
+                const { email, title, description } = req.body;
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
+
+                const note = { email, title, description, createdAt: new Date() };
+                const result = await notesCollection.insertOne(note);
+
+                res.status(201).send({ insertedId: result.insertedId });
+            } catch (err) {
+                console.error("❌ Error creating note:", err);
+                res.status(500).send({ message: "Failed to create note" });
+            }
+        });
+
+        // Get all notes for a student
+        app.get("/notes/student/:email", verifyJWT, async (req, res) => {
+            try {
+                const email = req.params.email;
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
+
+                const notes = await notesCollection
+                    .find({ email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(notes);
+            } catch (err) {
+                console.error("❌ Error fetching notes:", err);
+                res.status(500).send({ message: "Failed to fetch notes" });
+            }
+        });
+
+        // Update note
+        app.patch("/notes/:id", verifyJWT, async (req, res) => {
+            try {
+                const id = req.params.id;
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ message: "Invalid note id" });
+                }
+
+                const note = await notesCollection.findOne({ _id: new ObjectId(id) });
+                if (!note) return res.status(404).send({ message: "Note not found" });
+                if (req.decoded.email !== note.email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
+
+                const updates = req.body; // { title, description }
+                const result = await notesCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updates }
+                );
+
+                res.send(result);
+            } catch (err) {
+                console.error("❌ Error updating note:", err);
+                res.status(500).send({ message: "Failed to update note" });
+            }
+        });
+
+        // Delete note
+        app.delete("/notes/:id", verifyJWT, async (req, res) => {
+            try {
+                const id = req.params.id;
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ message: "Invalid note id" });
+                }
+
+                const note = await notesCollection.findOne({ _id: new ObjectId(id) });
+                if (!note) return res.status(404).send({ message: "Note not found" });
+                if (req.decoded.email !== note.email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
+
+                const result = await notesCollection.deleteOne({ _id: new ObjectId(id) });
+                res.send(result);
+            } catch (err) {
+                console.error("❌ Error deleting note:", err);
+                res.status(500).send({ message: "Failed to delete note" });
+            }
+        });
+
 
 
 
