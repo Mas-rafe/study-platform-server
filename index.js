@@ -805,40 +805,80 @@ async function run() {
         // -------------------------
         // 📌 STUDENT BOOKINGS
         // -------------------------
-        app.get("/bookings/student/:email", verifyJWT, async (req, res) => {
-            try {
-                const email = req.params.email;
-                if (req.decoded.email !== email) {
-                    return res.status(403).send({ message: "Forbidden" });
-                }
+       app.get("/bookings/student/:email", verifyJWT, async (req, res) => {
+  try {
+    const email = req.params.email;
 
-                const bookings = await bookingsCollection
-                    .find({ studentEmail: email })
-                    .sort({ bookedAt: -1 })
-                    .toArray();
+    // JWT check
+    if (req.decoded.email !== email) {
+      return res.status(403).send({ message: "Forbidden" });
+    }
 
-                // attach session data
-                const enriched = await Promise.all(
-                    bookings.map(async (b) => {
-                        let sessionDoc = null;
-                        try {
-                            if (ObjectId.isValid(b.sessionId)) {
-                                sessionDoc = await sessionsCollection.findOne({ _id: new ObjectId(b.sessionId) });
-                            }
-                            if (sessionDoc) sessionDoc._id = sessionDoc._id.toString();
-                        } catch {
-                            // ignore errors
-                        }
-                        return { ...b, session: sessionDoc };
-                    })
-                );
+    // get all bookings for student
+    const bookings = await bookingsCollection
+      .find({ studentEmail: email })
+      .sort({ bookedAt: -1 })
+      .toArray();
 
-                res.send(enriched);
-            } catch (err) {
-                console.error("❌ Error fetching student bookings:", err);
-                res.status(500).send({ message: "Failed to fetch bookings" });
-            }
-        });
+    // attach session data properly
+    const enriched = await Promise.all(
+      bookings.map(async (b) => {
+        let sessionDoc = null;
+        try {
+          if (ObjectId.isValid(b.sessionId)) {
+            sessionDoc = await sessionsCollection.findOne({
+              _id: new ObjectId(b.sessionId),
+            });
+          }
+
+          if (sessionDoc) {
+            // normalize fields for frontend
+            sessionDoc = {
+              _id: sessionDoc._id.toString(),
+              title: sessionDoc.title || "Untitled Session",
+              tutorName: sessionDoc.tutorName || "Unknown Tutor",
+              registrationFee: sessionDoc.registrationFee || 0,
+
+              // make sure dates are ISO strings so frontend can format
+              registrationStart: sessionDoc.registrationStart
+                ? new Date(sessionDoc.registrationStart).toISOString()
+                : null,
+              registrationEnd: sessionDoc.registrationEnd
+                ? new Date(sessionDoc.registrationEnd).toISOString()
+                : null,
+              classStart: sessionDoc.classStart
+                ? new Date(sessionDoc.classStart).toISOString()
+                : null,
+              classEnd: sessionDoc.classEnd
+                ? new Date(sessionDoc.classEnd).toISOString()
+                : null,
+
+              // attach materials if exist
+              materials: sessionDoc.materials || [],
+            };
+          }
+        } catch (err) {
+          console.error("❌ Error attaching session:", err);
+        }
+
+        return {
+          ...b,
+          _id: b._id.toString(),
+          bookedAt: b.bookedAt
+            ? new Date(b.bookedAt).toISOString()
+            : null,
+          session: sessionDoc,
+        };
+      })
+    );
+
+    res.send(enriched);
+  } catch (err) {
+    console.error("❌ Error fetching student bookings:", err);
+    res.status(500).send({ message: "Failed to fetch bookings" });
+  }
+});
+
 
 
         // -------------------------
