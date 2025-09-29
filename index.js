@@ -10,7 +10,13 @@ const path = require("path");
 
 
 //middleware
-app.use(cors());
+// ✅ Allow Firebase hosting domain
+app.use(
+  cors({
+    origin: ["https://study-platform-f9af6.firebaseapp.com"], 
+    credentials: true, // if you use cookies / auth headers
+  })
+);
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
@@ -67,7 +73,7 @@ const upload = multer({ storage });
 async function run() {
     try {
         // Connect the client to the server	(optional starting in v4.7)
-        await client.connect();
+        // await client.connect();
         const db = client.db('studyPlatformDB');
         const usersCollection = db.collection('users');
         const sessionsCollection = db.collection('sessions');
@@ -202,14 +208,7 @@ async function run() {
 
 
 
-        app.get("/reviews/:sessionId", async (req, res) => {
-            const { sessionId } = req.params;
-            const reviews = await reviewsCollection
-                .find({ sessionId })
-                .sort({ createdAt: -1 })
-                .toArray();
-            res.send(reviews);
-        });
+      
 
         // GET: All sessions (for admin)
         app.get("/sessions", verifyJWT, verifyAdmin, async (req, res) => {
@@ -379,17 +378,6 @@ async function run() {
             res.send(session);
         });
 
-        // Get reviews for a session
-        app.get("/reviews/:sessionId", async (req, res) => {
-            const { sessionId } = req.params;
-            if (!ObjectId.isValid(sessionId)) return res.status(400).send({ message: "Invalid session ID" });
-            const reviews = await reviewsCollection
-                .find({ sessionId: new ObjectId(sessionId) })
-                .sort({ createdAt: -1 })
-                .toArray();
-
-            res.send(reviews);
-        });
 
 
 
@@ -545,6 +533,28 @@ async function run() {
                 res.status(500).send({ success: false, message: "Server error" });
             }
         });
+
+                // Get reviews for a session
+        app.get("/reviews/:sessionId", async (req, res) => {
+            const { sessionId } = req.params;
+            if (!ObjectId.isValid(sessionId)) return res.status(400).send({ message: "Invalid session ID" });
+            const reviews = await reviewsCollection
+                .find({ sessionId: new ObjectId(sessionId) })
+                .sort({ createdAt: -1 })
+                .toArray();
+
+            res.send(reviews);
+        });
+
+          app.get("/reviews/:sessionId", async (req, res) => {
+            const { sessionId } = req.params;
+            const reviews = await reviewsCollection
+                .find({ sessionId })
+                .sort({ createdAt: -1 })
+                .toArray();
+            res.send(reviews);
+        });
+
 
         app.post("/reviews", async (req, res) => {
             try {
@@ -1008,8 +1018,8 @@ async function run() {
 
 
         // Send a ping to confirm a successful connection
-        await client.db("admin").command({ ping: 1 });
-        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        // await client.db("admin").command({ ping: 1 });
+        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
