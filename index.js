@@ -12,10 +12,10 @@ const path = require("path");
 //middleware
 // ✅ Allow Firebase hosting domain
 app.use(
-  cors({
-    origin: ["https://study-platform-f9af6.firebaseapp.com"], 
-    credentials: true, // if you use cookies / auth headers
-  })
+    cors({
+        origin: ["https://study-platform-f9af6.firebaseapp.com"],
+        credentials: true, // if you use cookies / auth headers
+    })
 );
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
@@ -208,7 +208,7 @@ async function run() {
 
 
 
-      
+
 
         // GET: All sessions (for admin)
         app.get("/sessions", verifyJWT, verifyAdmin, async (req, res) => {
@@ -534,24 +534,17 @@ async function run() {
             }
         });
 
-                // Get reviews for a session
+        // Get reviews for a session
+        // Get reviews for a specific session (public)
         app.get("/reviews/:sessionId", async (req, res) => {
             const { sessionId } = req.params;
-            if (!ObjectId.isValid(sessionId)) return res.status(400).send({ message: "Invalid session ID" });
-            const reviews = await reviewsCollection
-                .find({ sessionId: new ObjectId(sessionId) })
-                .sort({ createdAt: -1 })
-                .toArray();
 
-            res.send(reviews);
-        });
-
-          app.get("/reviews/:sessionId", async (req, res) => {
-            const { sessionId } = req.params;
+            // If you're storing sessionId as string in reviews collection
             const reviews = await reviewsCollection
                 .find({ sessionId })
                 .sort({ createdAt: -1 })
                 .toArray();
+
             res.send(reviews);
         });
 
@@ -586,36 +579,36 @@ async function run() {
             }
         });
 
-        // GET all reviews (admin only)
-        app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
-            try {
-                const reviews = await reviewsCollection.find({}).toArray();
-                res.send(reviews);
-            } catch (error) {
-                console.error("❌ Error fetching reviews:", error);
-                res.status(500).send({ success: false, message: "Failed to fetch reviews" });
-            }
-        });
+        // // GET all reviews (admin only)
+        // app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
+        //     try {
+        //         const reviews = await reviewsCollection.find({}).toArray();
+        //         res.send(reviews);
+        //     } catch (error) {
+        //         console.error("❌ Error fetching reviews:", error);
+        //         res.status(500).send({ success: false, message: "Failed to fetch reviews" });
+        //     }
+        // });
 
-        // DELETE review (admin only)
-        app.delete("/reviews/:id", verifyJWT, verifyAdmin, async (req, res) => {
-            try {
-                const id = req.params.id;
-                if (!ObjectId.isValid(id)) {
-                    return res.status(400).send({ success: false, message: "Invalid review ID" });
-                }
+        // // DELETE review (admin only)
+        // app.delete("/reviews/:id", verifyJWT, verifyAdmin, async (req, res) => {
+        //     try {
+        //         const id = req.params.id;
+        //         if (!ObjectId.isValid(id)) {
+        //             return res.status(400).send({ success: false, message: "Invalid review ID" });
+        //         }
 
-                const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
-                if (result.deletedCount > 0) {
-                    res.send({ success: true, message: "Review deleted" });
-                } else {
-                    res.status(404).send({ success: false, message: "Review not found" });
-                }
-            } catch (error) {
-                console.error("❌ Error deleting review:", error);
-                res.status(500).send({ success: false, message: "Failed to delete review" });
-            }
-        });
+        //         const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
+        //         if (result.deletedCount > 0) {
+        //             res.send({ success: true, message: "Review deleted" });
+        //         } else {
+        //             res.status(404).send({ success: false, message: "Review not found" });
+        //         }
+        //     } catch (error) {
+        //         console.error("❌ Error deleting review:", error);
+        //         res.status(500).send({ success: false, message: "Failed to delete review" });
+        //     }
+        // });
 
         //Api s for material
         // POST /materials (with file upload)
@@ -815,79 +808,79 @@ async function run() {
         // -------------------------
         // 📌 STUDENT BOOKINGS
         // -------------------------
-       app.get("/bookings/student/:email", verifyJWT, async (req, res) => {
-  try {
-    const email = req.params.email;
+        app.get("/bookings/student/:email", verifyJWT, async (req, res) => {
+            try {
+                const email = req.params.email;
 
-    // JWT check
-    if (req.decoded.email !== email) {
-      return res.status(403).send({ message: "Forbidden" });
-    }
+                // JWT check
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden" });
+                }
 
-    // get all bookings for student
-    const bookings = await bookingsCollection
-      .find({ studentEmail: email })
-      .sort({ bookedAt: -1 })
-      .toArray();
+                // get all bookings for student
+                const bookings = await bookingsCollection
+                    .find({ studentEmail: email })
+                    .sort({ bookedAt: -1 })
+                    .toArray();
 
-    // attach session data properly
-    const enriched = await Promise.all(
-      bookings.map(async (b) => {
-        let sessionDoc = null;
-        try {
-          if (ObjectId.isValid(b.sessionId)) {
-            sessionDoc = await sessionsCollection.findOne({
-              _id: new ObjectId(b.sessionId),
-            });
-          }
+                // attach session data properly
+                const enriched = await Promise.all(
+                    bookings.map(async (b) => {
+                        let sessionDoc = null;
+                        try {
+                            if (ObjectId.isValid(b.sessionId)) {
+                                sessionDoc = await sessionsCollection.findOne({
+                                    _id: new ObjectId(b.sessionId),
+                                });
+                            }
 
-          if (sessionDoc) {
-            // normalize fields for frontend
-            sessionDoc = {
-              _id: sessionDoc._id.toString(),
-              title: sessionDoc.title || "Untitled Session",
-              tutorName: sessionDoc.tutorName || "Unknown Tutor",
-              registrationFee: sessionDoc.registrationFee || 0,
+                            if (sessionDoc) {
+                                // normalize fields for frontend
+                                sessionDoc = {
+                                    _id: sessionDoc._id.toString(),
+                                    title: sessionDoc.title || "Untitled Session",
+                                    tutorName: sessionDoc.tutorName || "Unknown Tutor",
+                                    registrationFee: sessionDoc.registrationFee || 0,
 
-              // make sure dates are ISO strings so frontend can format
-              registrationStart: sessionDoc.registrationStart
-                ? new Date(sessionDoc.registrationStart).toISOString()
-                : null,
-              registrationEnd: sessionDoc.registrationEnd
-                ? new Date(sessionDoc.registrationEnd).toISOString()
-                : null,
-              classStart: sessionDoc.classStart
-                ? new Date(sessionDoc.classStart).toISOString()
-                : null,
-              classEnd: sessionDoc.classEnd
-                ? new Date(sessionDoc.classEnd).toISOString()
-                : null,
+                                    // make sure dates are ISO strings so frontend can format
+                                    registrationStart: sessionDoc.registrationStart
+                                        ? new Date(sessionDoc.registrationStart).toISOString()
+                                        : null,
+                                    registrationEnd: sessionDoc.registrationEnd
+                                        ? new Date(sessionDoc.registrationEnd).toISOString()
+                                        : null,
+                                    classStart: sessionDoc.classStart
+                                        ? new Date(sessionDoc.classStart).toISOString()
+                                        : null,
+                                    classEnd: sessionDoc.classEnd
+                                        ? new Date(sessionDoc.classEnd).toISOString()
+                                        : null,
 
-              // attach materials if exist
-              materials: sessionDoc.materials || [],
-            };
-          }
-        } catch (err) {
-          console.error("❌ Error attaching session:", err);
-        }
+                                    // attach materials if exist
+                                    materials: sessionDoc.materials || [],
+                                };
+                            }
+                        } catch (err) {
+                            console.error("❌ Error attaching session:", err);
+                        }
 
-        return {
-          ...b,
-          _id: b._id.toString(),
-          bookedAt: b.bookedAt
-            ? new Date(b.bookedAt).toISOString()
-            : null,
-          session: sessionDoc,
-        };
-      })
-    );
+                        return {
+                            ...b,
+                            _id: b._id.toString(),
+                            bookedAt: b.bookedAt
+                                ? new Date(b.bookedAt).toISOString()
+                                : null,
+                            session: sessionDoc,
+                        };
+                    })
+                );
 
-    res.send(enriched);
-  } catch (err) {
-    console.error("❌ Error fetching student bookings:", err);
-    res.status(500).send({ message: "Failed to fetch bookings" });
-  }
-});
+                res.send(enriched);
+            } catch (err) {
+                console.error("❌ Error fetching student bookings:", err);
+                res.status(500).send({ message: "Failed to fetch bookings" });
+            }
+        });
 
 
 
