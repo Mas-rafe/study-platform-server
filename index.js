@@ -2,21 +2,32 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const app = express()
-const port = process.env.PORT || 5000;
+
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
-const multer = require("multer");
+const port = process.env.PORT || 5000;
+// const multer = require("multer");
 const path = require("path");
 
 
 //middleware
-// ✅ Allow Firebase hosting domain
-app.use(
-    cors({
-        origin: ["https://study-platform-f9af6.firebaseapp.com"],
-        credentials: true, // if you use cookies / auth headers
-    })
-);
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://study-platform-f9af6.firebaseapp.com',
+    'https://study-platform-f9af6.web.app'
+
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true
+}));
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
@@ -55,17 +66,17 @@ function verifyJWT(req, res, next) {
     });
 }
 
-// Configure storage
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, "uploads/materials"); // all files will be stored in /uploads
-    },
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
-    },
-});
+// // Configure storage
+// const storage = multer.diskStorage({
+//     destination: (req, file, cb) => {
+//         cb(null, "uploads/materials"); // all files will be stored in /uploads
+//     },
+//     filename: (req, file, cb) => {
+//         cb(null, Date.now() + path.extname(file.originalname));
+//     },
+// });
 
-const upload = multer({ storage });
+// const upload = multer({ storage });
 
 
 
@@ -394,7 +405,7 @@ async function run() {
 
                 const bookingsCount = await bookingsCollection.estimatedDocumentCount();
                 const reviewsCount = await reviewsCollection.estimatedDocumentCount();
-                const notificationsCount = await notificationsCollection.estimatedDocumentCount();
+
                 const materialsCount = await materialsCollection.estimatedDocumentCount(); // ✅ new
 
                 res.send({
@@ -612,31 +623,31 @@ async function run() {
 
         //Api s for material
         // POST /materials (with file upload)
-        app.post("/materials", upload.single("file"), async (req, res) => {
-            try {
-                const { sessionId, title, description, tutorEmail } = req.body;
-                const fileUrl = `/uploads/materials/${req.file.filename}`;
+        // app.post("/materials", upload.single("file"), async (req, res) => {
+        //     try {
+        //         const { sessionId, title, description, tutorEmail } = req.body;
+        //         const fileUrl = `/uploads/materials/${req.file.filename}`;
 
-                const material = {
-                    sessionId,
-                    title,
-                    description,
-                    tutorEmail,
-                    fileUrl,
-                    status: "pending",   // 👈 default status
-                    createdAt: new Date(),
-                };
+        //         const material = {
+        //             sessionId,
+        //             title,
+        //             description,
+        //             tutorEmail,
+        //             fileUrl,
+        //             status: "pending",   // 👈 default status
+        //             createdAt: new Date(),
+        //         };
 
-                const result = await materialsCollection.insertOne(material);
-                res.status(201).send({ success: true, result });
-            } catch (error) {
-                console.error("Error uploading material:", error);
-                res.status(500).send({ error: "Failed to upload material" });
-            }
-        });
+        //         const result = await materialsCollection.insertOne(material);
+        //         res.status(201).send({ success: true, result });
+        //     } catch (error) {
+        //         console.error("Error uploading material:", error);
+        //         res.status(500).send({ error: "Failed to upload material" });
+        //     }
+        // });
 
-        // Serve uploaded files statically
-        app.use("/uploads", express.static("uploads"));
+        // // Serve uploaded files statically
+        // app.use("/uploads", express.static("uploads"));
 
 
         // GET all materials → optional: admin only
@@ -1012,7 +1023,7 @@ async function run() {
 
         // Send a ping to confirm a successful connection
         // await client.db("admin").command({ ping: 1 });
-        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
     } finally {
         // Ensures that the client will close when you finish/error
         // await client.close();
