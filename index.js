@@ -6,7 +6,7 @@ const app = express()
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const port = process.env.PORT || 5000;
-// const multer = require("multer");
+const multer = require("multer");
 const path = require("path");
 
 
@@ -66,17 +66,17 @@ function verifyJWT(req, res, next) {
     });
 }
 
-// // Configure storage
-// const storage = multer.diskStorage({
-//     destination: (req, file, cb) => {
-//         cb(null, "uploads/materials"); // all files will be stored in /uploads
-//     },
-//     filename: (req, file, cb) => {
-//         cb(null, Date.now() + path.extname(file.originalname));
-//     },
-// });
+// Configure storage
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, "uploads/materials"); // all files will be stored in /uploads
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname));
+    },
+});
 
-// const upload = multer({ storage });
+const upload = multer({ storage });
 
 
 
@@ -217,7 +217,40 @@ async function run() {
         });
 
 
+        // student-only
+        app.get("/sessions/student/:email", verifyJWT, async (req, res) => {
+            const email = req.params.email;
+            const sessions = await sessionsCollection.find({ studentEmail: email }).toArray();
+            res.send(sessions);
+        });
 
+        // admin: get all sessions
+        app.get("/admin/sessions", verifyJWT, verifyAdmin, async (req, res) => {
+            try {
+                const sessions = await sessionsCollection.find({}).toArray();
+                res.send(sessions);
+            } catch (err) {
+                console.error("Error fetching all sessions:", err);
+                res.status(500).send({ error: "Failed to fetch sessions" });
+            }
+        });
+
+               // 🔄 Tutor's sessions (use tutor email)
+        
+        app.get("/sessions/tutor/:email", async (req, res) => {
+            try {
+                const email = req.params.email;
+                const sessions = await sessionsCollection
+                    .find({ tutorEmail: email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(sessions);
+            } catch (error) {
+                console.error("Error fetching tutor sessions:", error);
+                res.status(500).send({ message: "Failed to fetch tutor sessions" });
+            }
+        });
 
 
 
@@ -347,23 +380,7 @@ async function run() {
         });
 
 
-        // 🔄 Tutor's sessions (use tutor email)
-        // Replaces your current: app.get("/sessions/:email")
-        app.get("/sessions/tutor/:email", async (req, res) => {
-            try {
-                const email = req.params.email;
-                const sessions = await sessionsCollection
-                    .find({ tutorEmail: email })
-                    .sort({ createdAt: -1 })
-                    .toArray();
-
-                res.send(sessions);
-            } catch (error) {
-                console.error("Error fetching tutor sessions:", error);
-                res.status(500).send({ message: "Failed to fetch tutor sessions" });
-            }
-        });
-
+ 
         // PATCH session resubmit (for rejected → pending)[tutors}]
         app.patch("/sessions/:id/resubmit", async (req, res) => {
             try {
@@ -416,7 +433,7 @@ async function run() {
                     rejectedSessions: rejectedCount,
                     totalBookings: bookingsCount,
                     totalReviews: reviewsCount,
-                    totalNotifications: notificationsCount,
+
                     totalMaterials: materialsCount, // ✅ show in dashboard
                 });
             } catch (err) {
@@ -545,109 +562,80 @@ async function run() {
             }
         });
 
-        // Get reviews for a session
-        // Get reviews for a specific session (public)
-        app.get("/reviews/:sessionId", async (req, res) => {
-            const { sessionId } = req.params;
 
-            // If you're storing sessionId as string in reviews collection
-            const reviews = await reviewsCollection
-                .find({ sessionId })
-                .sort({ createdAt: -1 })
-                .toArray();
+        // ================= Reviews Routes =================
 
+        // POST review (student only)
+        // POST review (student only)
+        app.post("/reviews", verifyJWT, async (req, res) => {
+            const { sessionId, studentEmail, studentName, rating, comment } = req.body;
+            if (!sessionId || !studentEmail || rating == null || !comment)
+                return res.status(400).send({ message: "Missing fields" });
+
+            const user = await usersCollection.findOne({ email: studentEmail });
+            if (!user || user.role !== "student") return res.status(403).send({ message: "Only students can post reviews" });
+
+            const review = { sessionId, studentEmail, studentName, rating: Number(rating), comment, createdAt: new Date() };
+            const result = await reviewsCollection.insertOne(review);
+            res.send(result);
+        });
+
+        // GET all reviews (admin only) ✅ must be before /reviews/:sessionId
+        app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
+            const reviews = await reviewsCollection.find({}).toArray();
             res.send(reviews);
         });
 
+        // DELETE review (admin only)
+        // DELETE review (admin only)
+        app.delete("/reviews/:id", verifyJWT, verifyAdmin, async (req, res) => {
+            const id = req.params.id;
+            if (!ObjectId.isValid(id))
+                return res.status(400).send({ success: false, message: "Invalid review ID" });
 
-        app.post("/reviews", async (req, res) => {
-            try {
-                const { sessionId, studentEmail, studentName, rating, comment } = req.body;
+            const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
 
-                if (!sessionId || !studentEmail || rating == null || !comment) {
-                    return res.status(400).send({ success: false, message: "Missing required fields" });
-                }
-
-                const review = {
-                    sessionId: sessionId.toString(),
-                    studentEmail,
-                    studentName,
-                    rating,
-                    comment,
-                    createdAt: new Date(),
-                };
-
-                const result = await reviewsCollection.insertOne(review);
-
-                if (result.insertedId) {
-                    res.send({ success: true, message: "Review added successfully!" });
-                } else {
-                    res.status(500).send({ success: false, message: "Failed to add review" });
-                }
-            } catch (err) {
-                console.error("Error adding review:", err);
-                res.status(500).send({ success: false, message: "Server error" });
+            if (result.deletedCount === 1) {
+                res.send({ success: true, message: "Review deleted successfully" });
+            } else {
+                res.status(404).send({ success: false, message: "Review not found" });
             }
         });
 
-        // // GET all reviews (admin only)
-        // app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
-        //     try {
-        //         const reviews = await reviewsCollection.find({}).toArray();
-        //         res.send(reviews);
-        //     } catch (error) {
-        //         console.error("❌ Error fetching reviews:", error);
-        //         res.status(500).send({ success: false, message: "Failed to fetch reviews" });
-        //     }
-        // });
 
-        // // DELETE review (admin only)
-        // app.delete("/reviews/:id", verifyJWT, verifyAdmin, async (req, res) => {
-        //     try {
-        //         const id = req.params.id;
-        //         if (!ObjectId.isValid(id)) {
-        //             return res.status(400).send({ success: false, message: "Invalid review ID" });
-        //         }
-
-        //         const result = await reviewsCollection.deleteOne({ _id: new ObjectId(id) });
-        //         if (result.deletedCount > 0) {
-        //             res.send({ success: true, message: "Review deleted" });
-        //         } else {
-        //             res.status(404).send({ success: false, message: "Review not found" });
-        //         }
-        //     } catch (error) {
-        //         console.error("❌ Error deleting review:", error);
-        //         res.status(500).send({ success: false, message: "Failed to delete review" });
-        //     }
-        // });
+        // GET reviews for a session (public)
+        app.get("/reviews/:sessionId", async (req, res) => {
+            const reviews = await reviewsCollection.find({ sessionId: req.params.sessionId }).toArray();
+            res.send(reviews);
+        });
 
         //Api s for material
         // POST /materials (with file upload)
-        // app.post("/materials", upload.single("file"), async (req, res) => {
-        //     try {
-        //         const { sessionId, title, description, tutorEmail } = req.body;
-        //         const fileUrl = `/uploads/materials/${req.file.filename}`;
+        app.post("/materials", upload.single("file"), async (req, res) => {
+            try {
+                const { sessionId, title, description, tutorEmail } = req.body;
+                const fileUrl = `/uploads/materials/${req.file.filename}`;
 
-        //         const material = {
-        //             sessionId,
-        //             title,
-        //             description,
-        //             tutorEmail,
-        //             fileUrl,
-        //             status: "pending",   // 👈 default status
-        //             createdAt: new Date(),
-        //         };
+                const material = {
+                    sessionId,
+                    title,
+                    description,
+                    tutorEmail,
+                    fileUrl,
+                    status: "pending",   // 👈 default status
+                    createdAt: new Date(),
+                };
 
-        //         const result = await materialsCollection.insertOne(material);
-        //         res.status(201).send({ success: true, result });
-        //     } catch (error) {
-        //         console.error("Error uploading material:", error);
-        //         res.status(500).send({ error: "Failed to upload material" });
-        //     }
-        // });
+                const result = await materialsCollection.insertOne(material);
+                res.status(201).send({ success: true, result });
+            } catch (error) {
+                console.error("Error uploading material:", error);
+                res.status(500).send({ error: "Failed to upload material" });
+            }
+        });
 
-        // // Serve uploaded files statically
-        // app.use("/uploads", express.static("uploads"));
+        // Serve uploaded files statically
+        app.use("/uploads", express.static("uploads"));
 
 
         // GET all materials → optional: admin only
