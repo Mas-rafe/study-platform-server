@@ -13,6 +13,7 @@ const path = require("path");
 //middleware
 const allowedOrigins = [
     'http://localhost:5173',
+    'http://localhost:5174',
     'https://study-platform-f9af6.firebaseapp.com',
     'https://study-platform-f9af6.web.app'
 
@@ -206,15 +207,15 @@ async function run() {
         // });
 
         // GET: Approved sessions (for students)
-        app.get("/sessions", async (req, res) => {
-            try {
-                const result = await sessionsCollection.find({ status: "approved" }).toArray();
-                res.send(result);
-            } catch (error) {
-                console.error("❌ Error fetching sessions:", error);
-                res.status(500).send({ message: "Failed to fetch sessions" });
-            }
-        });
+        // app.get("/sessions", async (req, res) => {
+        //     try {
+        //         const result = await sessionsCollection.find({ status: "approved" }).toArray();
+        //         res.send(result);
+        //     } catch (error) {
+        //         console.error("❌ Error fetching sessions:", error);
+        //         res.status(500).send({ message: "Failed to fetch sessions" });
+        //     }
+        // });
 
 
         // student-only
@@ -235,8 +236,8 @@ async function run() {
             }
         });
 
-               // 🔄 Tutor's sessions (use tutor email)
-        
+        // 🔄 Tutor's sessions (use tutor email)
+
         app.get("/sessions/tutor/:email", async (req, res) => {
             try {
                 const email = req.params.email;
@@ -380,7 +381,7 @@ async function run() {
         });
 
 
- 
+
         // PATCH session resubmit (for rejected → pending)[tutors}]
         app.patch("/sessions/:id/resubmit", async (req, res) => {
             try {
@@ -878,6 +879,77 @@ async function run() {
             } catch (err) {
                 console.error("❌ Error fetching student bookings:", err);
                 res.status(500).send({ message: "Failed to fetch bookings" });
+            }
+        });
+
+        // 📌 ADMIN BOOKINGS
+        // -------------------------
+
+        // Get all bookings (with optional status filter)
+        app.get("/bookings", verifyJWT, async (req, res) => {
+            try {
+                const status = req.query.status; // e.g. ?status=pending
+
+                let filter = {};
+                if (status) {
+                    filter.status = status;
+                }
+
+                const bookings = await bookingsCollection
+                    .find(filter)
+                    .sort({ bookedAt: -1 })
+                    .toArray();
+
+                res.send(bookings);
+            } catch (err) {
+                console.error("❌ Error fetching bookings:", err);
+                res.status(500).send({ message: "Failed to fetch bookings" });
+            }
+        });
+
+        // Update booking status (approve/reject)
+        app.patch("/bookings/:id", verifyJWT, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const update = req.body; // { status: "approved" } or { status: "rejected" }
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ success: false, message: "Invalid booking ID" });
+                }
+
+                const result = await bookingsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: update }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send({ success: true });
+                } else {
+                    res.status(404).send({ success: false, message: "Booking not found" });
+                }
+            } catch (err) {
+                console.error("❌ Error updating booking:", err);
+                res.status(500).send({ success: false, message: "Server error" });
+            }
+        });
+
+        // Delete booking
+        app.delete("/bookings/:id", verifyJWT, async (req, res) => {
+            try {
+                const id = req.params.id;
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).send({ success: false, message: "Invalid booking ID" });
+                }
+
+                const result = await bookingsCollection.deleteOne({ _id: new ObjectId(id) });
+
+                if (result.deletedCount > 0) {
+                    res.send({ success: true, deletedCount: result.deletedCount });
+                } else {
+                    res.status(404).send({ success: false, message: "Booking not found" });
+                }
+            } catch (err) {
+                console.error("❌ Error deleting booking:", err);
+                res.status(500).send({ success: false, message: "Server error" });
             }
         });
 
