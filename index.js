@@ -249,18 +249,16 @@ async function run() {
             res.send(result.insertedId ? { success: true } : { success: false });
         });
 
-        // START SERVER
-        app.listen(port, () => {
-            console.log(`Server running on http://localhost:${port}`);
-        });
+   
 
     } catch (error) {
         console.error("Startup failed:", error);
     }
 }
 
-run().catch(console.dir);
+// run().catch(console.dir);
 
 app.get('/', (req, res) => {
     res.send('Study-platform API is running');
 });
+module.exports = app;
