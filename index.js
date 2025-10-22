@@ -29,7 +29,7 @@ app.use(cors({
 }));
 
 app.use(express.json());
-app.use("/uploads", express.static("uploads")); // ENABLED
+// app.use("/uploads", express.static("uploads")); // ENABLED
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.fvalijd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -60,7 +60,7 @@ const upload = multer({ storage });
 
 async function run() {
     try {
-        await client.connect();
+        // await client.connect();
         const db = client.db('studyPlatformDB');
         const usersCollection = db.collection('users');
         const sessionsCollection = db.collection('sessions');
@@ -249,16 +249,20 @@ async function run() {
             res.send(result.insertedId ? { success: true } : { success: false });
         });
 
-   
+
 
     } catch (error) {
         console.error("Startup failed:", error);
     }
 }
+   app.listen(port, () => {
+        console.log(`study platform running on port ${port}`)
+    })
 
-// run().catch(console.dir);
+run().catch(console.dir);
 
 app.get('/', (req, res) => {
     res.send('Study-platform API is running');
+ 
 });
-module.exports = app;
+// module.exports = app;
