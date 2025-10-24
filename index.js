@@ -60,7 +60,7 @@ const upload = multer({ storage });
 
 async function run() {
     try {
-        await client.connect(); // FIXED: আনকমেন্ট করা হয়েছে
+        // await client.connect(); 
         const db = client.db('studyPlatformDB');
         const usersCollection = db.collection('users');
         const sessionsCollection = db.collection('sessions');
@@ -188,12 +188,23 @@ async function run() {
             if (!session) return res.status(404).json({ message: "Not found" });
             res.json({ message: "Full session", session });
         });
-
+        //get all sessions
         app.get("/sessions", async (req, res) => {
-            const status = req.query.status;
-            const filter = status ? { status } : {};
-            const result = await sessionsCollection.find(filter).sort({ createdAt: -1 }).toArray();
-            res.send(result);
+            try {
+                const status = req.query.status;
+                const filter = status ? { status } : {};
+                const result = await sessionsCollection
+                    .find(filter)
+                    .sort({ createdAt: -1 }) // Newest first (use _id: -1 if createdAt is unavailable)
+                    .toArray();
+                res.send(result);
+            } catch (err) {
+                console.error("❌ Error fetching sessions:", err);
+                res.status(500).send({
+                    message: "Failed to fetch sessions",
+                    error: err.message,
+                });
+            }
         });
 
         app.get("/admin/sessions", verifyJWT, verifyAdmin, async (req, res) => {
@@ -207,8 +218,19 @@ async function run() {
         });
 
         app.get("/sessions/pending", verifyJWT, verifyAdmin, async (req, res) => {
-            const pending = await sessionsCollection.find({ status: "pending" }).toArray();
-            res.send(pending);
+            try {
+                const pending = await sessionsCollection
+                    .find({ status: "pending" })
+                    .sort({ createdAt: -1 }) // Newest first (use _id: -1 if createdAt is unavailable)
+                    .toArray();
+                res.send(pending);
+            } catch (err) {
+                console.error("❌ Error fetching pending sessions:", err);
+                res.status(500).send({
+                    message: "Failed to fetch pending sessions",
+                    error: err.message,
+                });
+            }
         });
 
         app.patch("/sessions/:id/approve", verifyJWT, verifyAdmin, async (req, res) => {
@@ -263,12 +285,29 @@ async function run() {
         });
 
         // MATERIALS
-        app.post("/materials", upload.single("file"), async (req, res) => {
-            const { sessionId, title, description, tutorEmail } = req.body;
-            const fileUrl = `/uploads/materials/${req.file.filename}`;
-            const material = { sessionId, title, description, tutorEmail, fileUrl, status: "pending", createdAt: new Date() };
-            const result = await materialsCollection.insertOne(material);
-            res.status(201).send({ success: true, result });
+        app.post("/materials", async (req, res) => {
+            try {
+                const { sessionId, title, description, tutorEmail, imageUrl } = req.body; // imageUrl from frontend
+                if (!sessionId || !title || !tutorEmail) {
+                    return res.status(400).json({ success: false, message: "Missing required fields" });
+                }
+
+                const material = {
+                    sessionId,
+                    title,
+                    description,
+                    tutorEmail,
+                    fileUrl: imageUrl || "no-file", // From ImgBB
+                    status: "pending",
+                    createdAt: new Date(),
+                };
+
+                const result = await materialsCollection.insertOne(material);
+                res.status(201).json({ success: true, result });
+            } catch (error) {
+                console.error("❌ Error uploading material:", error);
+                res.status(500).json({ success: false, message: "Server error", error: error.message });
+            }
         });
 
         app.get("/materials", verifyJWT, verifyAdmin, async (req, res) => {
@@ -396,6 +435,31 @@ async function run() {
             res.send(result);
         });
 
+
+        // GET users by emails (for reviews)
+        // // POST: /users/by-emails
+        // app.post("/users/by-emails", verifyToken, verifyAdmin, async (req, res) => {
+        //     try {
+        //         const { emails } = req.body;
+
+        //         if (!emails || !Array.isArray(emails) || emails.length === 0) {
+        //             return res.status(400).send({ message: "Emails array is required" });
+        //         }
+
+
+        //         const users = await usersCollection
+        //             .find({ email: { $in: emails } })
+        //             .project({ _id: 1, name: 1, email: 1, photo: 1 })
+        //             .toArray();
+
+        //         res.send(users);
+        //     } catch (err) {
+        //         console.error("Error in /users/by-emails:", err);
+        //         res.status(500).send({ message: "Server error" });
+        //     }
+        // });
+
+
         app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
             const reviews = await reviewsCollection.find({}).toArray();
             res.send(reviews);
@@ -449,13 +513,36 @@ async function run() {
 
         // TUTOR & STUDENT STATS
         app.get("/tutor/stats/:email", async (req, res) => {
-            const email = req.params.email;
-            const totalSessions = await sessionsCollection.countDocuments({ tutorEmail: email });
-            const totalMaterials = await materialsCollection.countDocuments({ tutorEmail: email });
-            const totalStudents = await bookingsCollection.countDocuments({ tutorEmail: email });
-            const reviews = await reviewsCollection.find({ sessionId: { $in: (await sessionsCollection.find({ tutorEmail: email }).map(s => s._id.toString())) } }).toArray();
-            const avgRating = reviews.length > 0 ? reviews.reduce((a, b) => a + b.rating, 0) / reviews.length : 0;
-            res.send({ totalSessions, totalMaterials, totalStudents, avgRating });
+            try {
+                const email = req.params.email;
+                if (!email) {
+                    return res.status(400).send({ message: "Email is required" });
+                }
+
+                const totalSessions = await sessionsCollection.countDocuments({ tutorEmail: email });
+                const totalMaterials = await materialsCollection.countDocuments({ tutorEmail: email });
+                const totalStudents = await bookingsCollection.countDocuments({ tutorEmail: email });
+
+                const reviews = await reviewsCollection.find({ tutorEmail: email }).toArray();
+                let avgRating = 0;
+                if (reviews.length > 0) {
+                    const ratings = reviews.map(r => Number(r.rating) || 0);
+                    avgRating = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+                }
+
+                res.send({
+                    totalSessions,
+                    totalMaterials,
+                    totalStudents,
+                    avgRating: Number(avgRating.toFixed(1)),
+                });
+            } catch (err) {
+                console.error("❌ Error fetching tutor stats:", err);
+                res.status(500).send({
+                    message: "Failed to fetch tutor stats",
+                    error: err.message,
+                });
+            }
         });
 
         app.get("/student/stats/:email", verifyJWT, async (req, res) => {
@@ -472,8 +559,11 @@ async function run() {
     } catch (error) {
         console.error("Startup failed:", error);
     }
+
 }
 
+
+// await client.close();
 
 
 run().catch(console.dir);
