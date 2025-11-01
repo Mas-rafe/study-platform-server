@@ -213,8 +213,20 @@ async function run() {
         });
 
         app.get("/sessions/tutor/:email", async (req, res) => {
-            const sessions = await sessionsCollection.find({ tutorEmail: req.params.email }).sort({ createdAt: -1 }).toArray();
-            res.send(sessions);
+            try {
+                const email = req.params.email;
+                if (!email) {
+                    return res.status(400).json({ success: false, message: "Email is required" });
+                }
+                const sessions = await sessionsCollection
+                    .find({ tutorEmail: email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.status(200).json(sessions);
+            } catch (error) {
+                console.error("❌ Error fetching tutor sessions:", error);
+                res.status(500).json({ success: false, message: "Server error", error: error.message });
+            }
         });
 
         app.get("/sessions/pending", verifyJWT, verifyAdmin, async (req, res) => {
@@ -367,6 +379,16 @@ async function run() {
         });
 
         // BOOKINGS
+        // Check if user has booked a session
+        app.get("/bookings/check", verifyToken, async (req, res) => {
+            const { sessionId, studentEmail } = req.query;
+            const booking = await bookingsCollection.findOne({
+                sessionId,
+                studentEmail,
+            });
+            res.json({ hasBooked: !!booking });
+        });
+        
         app.post("/bookings", async (req, res) => {
             const { sessionId, studentEmail, tutorEmail } = req.body;
             if (!sessionId || !studentEmail || !tutorEmail) return res.status(400).send({ success: false });
@@ -379,27 +401,39 @@ async function run() {
         });
 
         app.get("/bookings/student/:email", verifyJWT, async (req, res) => {
-            const email = req.params.email;
-            if (req.decoded.email !== email) return res.status(403).send({ message: "Forbidden" });
-            const bookings = await bookingsCollection.find({ studentEmail: email }).sort({ bookedAt: -1 }).toArray();
-            const enriched = await Promise.all(bookings.map(async (b) => {
-                let sessionDoc = null;
-                if (ObjectId.isValid(b.sessionId)) {
-                    sessionDoc = await sessionsCollection.findOne({ _id: new ObjectId(b.sessionId) });
+            try {
+                const email = req.params.email;
+                if (req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden" });
                 }
-                return {
-                    ...b,
-                    session: sessionDoc ? {
-                        _id: sessionDoc._id.toString(),
-                        title: sessionDoc.title,
-                        tutorName: sessionDoc.tutorName,
-                        registrationFee: sessionDoc.registrationFee,
-                    } : null,
-                };
-            }));
-            res.send(enriched);
+                const bookings = await bookingsCollection.find({ studentEmail: email }).sort({ bookedAt: -1 }).toArray();
+                const enriched = await Promise.all(bookings.map(async (b) => {
+                    let sessionDoc = null;
+                    if (ObjectId.isValid(b.sessionId)) {
+                        sessionDoc = await sessionsCollection.findOne({ _id: new ObjectId(b.sessionId) });
+                    }
+                    return {
+                        ...b,
+                        session: sessionDoc ? {
+                            _id: sessionDoc._id.toString(),
+                            title: sessionDoc.title,
+                            tutorName: sessionDoc.tutorName,
+                            tutorEmail: sessionDoc.tutorEmail,
+                            registrationFee: sessionDoc.registrationFee,
+                            registrationStart: sessionDoc.registrationStart,
+                            registrationEnd: sessionDoc.registrationEnd,
+                            classStart: sessionDoc.classStart,
+                            classEnd: sessionDoc.classEnd,
+                            image: sessionDoc.image || "https://via.placeholder.com/150?text=Session+Image",
+                        } : null,
+                    };
+                }));
+                res.send(enriched);
+            } catch (error) {
+                console.error("❌ Error fetching bookings:", error);
+                res.status(500).json({ success: false, message: "Server error", error: error.message });
+            }
         });
-
         app.get("/bookings", verifyJWT, verifyAdmin, async (req, res) => {
             const status = req.query.status;
             let filter = {};
@@ -477,20 +511,105 @@ async function run() {
             res.send(reviews);
         });
 
-        // NOTES
-        app.post("/notes", verifyJWT, async (req, res) => {
-            const { email, title, description } = req.body;
-            if (req.decoded.email !== email) return res.status(403).send({ message: "Forbidden" });
-            const note = { email, title, description, createdAt: new Date() };
-            const result = await notesCollection.insertOne(note);
-            res.status(201).send({ insertedId: result.insertedId });
+        app.get("/reviews/session/:sessionId/student/:email", async (req, res) => {
+            try {
+                const { sessionId, email } = req.params;
+                if (!sessionId || !email) {
+                    return res.status(400).json({ success: false, message: "Session ID and email are required" });
+                }
+                const review = await reviewsCollection.findOne({ sessionId, studentEmail: email });
+                res.status(200).json({ hasReview: !!review, review });
+            } catch (error) {
+                console.error("❌ Error checking review:", error);
+                res.status(500).json({ success: false, message: "Server error", error: error.message });
+            }
         });
 
-        app.get("/notes/student/:email", verifyJWT, async (req, res) => {
-            const email = req.params.email;
-            if (req.decoded.email !== email) return res.status(403).send({ message: "Forbidden" });
-            const notes = await notesCollection.find({ email }).sort({ createdAt: -1 }).toArray();
-            res.send(notes);
+        // NOTES
+        app.post("/notes", async (req, res) => {
+            try {
+                const { studentEmail, sessionId, title, description } = req.body;
+                const required = ["studentEmail", "sessionId", "title", "description"];
+                for (const f of required) {
+                    if (!req.body[f]) {
+                        return res.status(400).json({ success: false, message: `Missing: ${f}` });
+                    }
+                }
+
+                if (!ObjectId.isValid(sessionId)) {
+                    return res.status(400).json({ success: false, message: "Invalid sessionId" });
+                }
+
+                const newNote = {
+                    studentEmail,
+                    sessionId: new ObjectId(sessionId),
+                    title,
+                    description,
+                    createdAt: new Date(),
+                };
+
+                const result = await notesCollection.insertOne(newNote);
+                res.status(201).json({
+                    success: true,
+                    message: "Note created",
+                    insertedId: result.insertedId,
+                    note: { ...newNote, _id: result.insertedId },
+                });
+            } catch (error) {
+                console.error("❌ Error creating note:", error);
+                res.status(500).json({ success: false, message: "Failed", error: error.message });
+            }
+        });
+        app.get("/notes/student/:email", async (req, res) => {
+            try {
+                const email = req.params.email;
+                if (!email) {
+                    return res.status(400).json({ success: false, message: "Email is required" });
+                }
+                const notes = await notesCollection
+                    .aggregate([
+                        {
+                            $match: { studentEmail: email },
+                        },
+                        {
+                            $lookup: {
+                                from: "sessions",
+                                localField: "sessionId",
+                                foreignField: "_id",
+                                as: "session",
+                            },
+                        },
+                        {
+                            $unwind: {
+                                path: "$session",
+                                preserveNullAndEmptyArrays: true, // Keep notes even if session is not found
+                            },
+                        },
+                        {
+                            $project: {
+                                _id: 1,
+                                studentEmail: 1,
+                                sessionId: 1,
+                                title: 1,
+                                description: 1,
+                                createdAt: 1,
+                                session: {
+                                    _id: 1,
+                                    title: 1,
+                                    image: 1,
+                                },
+                            },
+                        },
+                        {
+                            $sort: { createdAt: -1 }, // Newest notes first
+                        },
+                    ])
+                    .toArray();
+                res.status(200).json(notes);
+            } catch (error) {
+                console.error("❌ Error fetching notes:", error);
+                res.status(500).json({ success: false, message: "Server error", error: error.message });
+            }
         });
 
         app.patch("/notes/:id", verifyJWT, async (req, res) => {
@@ -559,6 +678,34 @@ async function run() {
     } catch (error) {
         console.error("Startup failed:", error);
     }
+
+    //for homepage 
+    // 1. All Reviews (for testimonials)
+    app.get("/reviews", verifyToken, async (req, res) => {
+        const reviews = await reviewsCollection.find().toArray();
+        res.json(reviews);
+    });
+
+    // 2. Session Count
+    app.get("/sessions/count", verifyToken, async (req, res) => {
+        const count = await sessionsCollection.countDocuments({ status: "approved" });
+        res.json({ count });
+    });
+
+    // 3. Users Count
+    app.get("/users/count", verifyToken, async (req, res) => {
+        const [students, tutors] = await Promise.all([
+            usersCollection.countDocuments({ role: "student" }),
+            usersCollection.countDocuments({ role: "tutor" }),
+        ]);
+        res.json({ students, tutors });
+    });
+
+    // 4. Materials Count
+    app.get("/materials/approved/count", verifyToken, async (req, res) => {
+        const count = await materialsCollection.countDocuments({ status: "approved" });
+        res.json({ count });
+    });
 
 }
 
