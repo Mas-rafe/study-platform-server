@@ -19,14 +19,22 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
+        const allowedOrigins = [
+            'http://localhost:5173',
+            'http://localhost:5174',
+            'https://study-platform-f9af6.firebaseapp.com',
+            'https://study-platform-f9af6.web.app'
+        ];
+
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            callback(new Error('Not allowed by CORS'));
+            callback(null, false); // IMPORTANT: don't throw error in prod
         }
     },
-    credentials: true
-}));
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
+}));;
 
 app.use(express.json());
 app.use("/uploads", express.static("uploads")); // FIXED: আনকমেন্ট করা হয়েছে
@@ -501,10 +509,10 @@ async function run() {
         // });
 
 
-        app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
-            const reviews = await reviewsCollection.find({}).toArray();
-            res.send(reviews);
-        });
+        // app.get("/reviews", verifyJWT, verifyAdmin, async (req, res) => {
+        //     const reviews = await reviewsCollection.find({}).toArray();
+        //     res.send(reviews);
+        // });
 
         app.delete("/reviews/:id", verifyJWT, verifyAdmin, async (req, res) => {
             const id = req.params.id;
@@ -688,19 +696,19 @@ async function run() {
 
     //for homepage 
     // 1. All Reviews (for testimonials)
-    app.get("/reviews", verifyJWT, async (req, res) => {
+    app.get("/reviews",  async (req, res) => {
         const reviews = await reviewsCollection.find().toArray();
         res.json(reviews);
     });
 
     // 2. Session Count
-    app.get("/sessions/count", verifyJWT, async (req, res) => {
+    app.get("/sessions/count", async (req, res) => {
         const count = await sessionsCollection.countDocuments({ status: "approved" });
         res.json({ count });
     });
 
     // 3. Users Count
-    app.get("/users/count", verifyJWT, async (req, res) => {
+    app.get("/users/count",  async (req, res) => {
         const [students, tutors] = await Promise.all([
             usersCollection.countDocuments({ role: "student" }),
             usersCollection.countDocuments({ role: "tutor" }),
@@ -709,7 +717,7 @@ async function run() {
     });
 
     // 4. Materials Count
-    app.get("/materials/approved/count", verifyJWT, async (req, res) => {
+    app.get("/materials/approved/count",  async (req, res) => {
         const count = await materialsCollection.countDocuments({ status: "approved" });
         res.json({ count });
     });
