@@ -89,9 +89,16 @@ async function run() {
         // USERS
         app.post("/users", async (req, res) => {
             const user = req.body;
+
             const existing = await usersCollection.findOne({ email: user.email });
-            if (existing) return res.send({ message: "User exists" });
-            user.role = "student";
+            if (existing) {
+                return res.send({ message: "User exists" });
+            }
+            const allowedRoles = ["student", "tutor"];
+
+            user.role = allowedRoles.includes(user.role)
+                ? user.role
+                : "student";
             const result = await usersCollection.insertOne(user);
             res.send(result);
         });
@@ -380,7 +387,7 @@ async function run() {
 
         // BOOKINGS
         // Check if user has booked a session
-        app.get("/bookings/check", verifyToken, async (req, res) => {
+        app.get("/bookings/check", verifyJWT, async (req, res) => {
             const { sessionId, studentEmail } = req.query;
             const booking = await bookingsCollection.findOne({
                 sessionId,
@@ -388,13 +395,13 @@ async function run() {
             });
             res.json({ hasBooked: !!booking });
         });
-        
+
         app.post("/bookings", async (req, res) => {
             const { sessionId, studentEmail, tutorEmail } = req.body;
             if (!sessionId || !studentEmail || !tutorEmail) return res.status(400).send({ success: false });
             const session = await sessionsCollection.findOne({ _id: new ObjectId(sessionId), status: "approved" });
             if (!session) return res.status(404).send({ success: false });
-            const existing = await bookingsCollection.findOne({ sessionId, studentEmail }); // FIXED: toString() না দিয়ে direct
+            const existing = await bookingsCollection.findOne({ sessionId, studentEmail });
             if (existing) return res.status(409).send({ success: false });
             const result = await bookingsCollection.insertOne({ sessionId, studentEmail, tutorEmail, bookedAt: new Date(), status: "pending" });
             res.send(result.insertedId ? { success: true } : { success: false });
@@ -472,7 +479,7 @@ async function run() {
 
         // GET users by emails (for reviews)
         // // POST: /users/by-emails
-        // app.post("/users/by-emails", verifyToken, verifyAdmin, async (req, res) => {
+        // app.post("/users/by-emails", verifyJWT, verifyAdmin, async (req, res) => {
         //     try {
         //         const { emails } = req.body;
 
@@ -681,19 +688,19 @@ async function run() {
 
     //for homepage 
     // 1. All Reviews (for testimonials)
-    app.get("/reviews", verifyToken, async (req, res) => {
+    app.get("/reviews", verifyJWT, async (req, res) => {
         const reviews = await reviewsCollection.find().toArray();
         res.json(reviews);
     });
 
     // 2. Session Count
-    app.get("/sessions/count", verifyToken, async (req, res) => {
+    app.get("/sessions/count", verifyJWT, async (req, res) => {
         const count = await sessionsCollection.countDocuments({ status: "approved" });
         res.json({ count });
     });
 
     // 3. Users Count
-    app.get("/users/count", verifyToken, async (req, res) => {
+    app.get("/users/count", verifyJWT, async (req, res) => {
         const [students, tutors] = await Promise.all([
             usersCollection.countDocuments({ role: "student" }),
             usersCollection.countDocuments({ role: "tutor" }),
@@ -702,7 +709,7 @@ async function run() {
     });
 
     // 4. Materials Count
-    app.get("/materials/approved/count", verifyToken, async (req, res) => {
+    app.get("/materials/approved/count", verifyJWT, async (req, res) => {
         const count = await materialsCollection.countDocuments({ status: "approved" });
         res.json({ count });
     });
