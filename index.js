@@ -18,23 +18,18 @@ const allowedOrigins = [
 ];
 
 app.use(cors({
-    origin: function (origin, callback) {
-        const allowedOrigins = [
-            'http://localhost:5173',
-            'http://localhost:5174',
-            'https://study-platform-f9af6.firebaseapp.com',
-            'https://study-platform-f9af6.web.app'
-        ];
+ origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
 
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            callback(null, false); // IMPORTANT: don't throw error in prod
-        }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
-}));;
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"],
+}));
 
 app.use(express.json());
 app.use("/uploads", express.static("uploads")); // FIXED: আনকমেন্ট করা হয়েছে
@@ -631,7 +626,7 @@ async function run() {
             const id = req.params.id;
             if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid note id" });
             const note = await notesCollection.findOne({ _id: new ObjectId(id) });
-            if (!note || req.decoded.email !== note.email) return res.status(403).send({ message: "Forbidden" });
+            if (!note || req.decoded.email !== note.studentEmail) return res.status(403).send({ message: "Forbidden" });
             const result = await notesCollection.updateOne({ _id: new ObjectId(id) }, { $set: req.body });
             res.send(result);
         });
@@ -640,7 +635,7 @@ async function run() {
             const id = req.params.id;
             if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid note id" });
             const note = await notesCollection.findOne({ _id: new ObjectId(id) });
-            if (!note || req.decoded.email !== note.email) return res.status(403).send({ message: "Forbidden" });
+            if (!note || req.decoded.email !== note.studentEmail) return res.status(403).send({ message: "Forbidden" });
             const result = await notesCollection.deleteOne({ _id: new ObjectId(id) });
             res.send(result);
         });
@@ -731,7 +726,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-    res.send('Study-platform API is running');
+    res.send('Study-platform  is running');
 });
 app.listen(port, () => {
     console.log(`study platform running on port ${port}`);
